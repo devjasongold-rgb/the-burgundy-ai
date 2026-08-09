@@ -1,0 +1,93 @@
+generator client { provider = "prisma-client-js" }
+datasource db { provider = "postgresql"; url = env("DATABASE_URL"); directUrl = env("DIRECT_URL") }
+
+enum MessageRole { USER ASSISTANT SYSTEM STAFF }
+enum ReservationStatus { PENDING CONFIRMED CANCELLED COMPLETED NO_SHOW WAITLISTED }
+enum EventStatus { NEW CONTACTED QUALIFIED BOOKED LOST }
+enum OrderStatus { DRAFT PENDING_PAYMENT CONFIRMED ACCEPTED PREPARING READY OUT_FOR_DELIVERY COMPLETED CANCELLED }
+enum FulfillmentType { PICKUP DELIVERY DINE_IN }
+enum PaymentStatus { PENDING PAID FAILED REFUNDED CANCELLED }
+enum StaffActionType { ORDER_ACCEPTED ORDER_REJECTED STATUS_CHANGED NOTE_ADDED STAFF_TAKEOVER PAYMENT_VERIFIED POS_SYNC_FAILED }
+enum InventorySource { MANUAL POS API }
+enum SyncStatus { IDLE RUNNING SUCCESS FAILED }
+
+model Restaurant {
+  id String @id @default(cuid()); name String; slug String @unique; city String?; country String?; address String?; phone String?; email String?; website String?
+  openingHours Json?; aiTone String @default("warm, polished, concise, luxury hospitality"); seatCapacity Int?
+  menuItems MenuItem[]; knowledgeEntries KnowledgeEntry[]; customers Customer[]; conversations Conversation[]; reservations Reservation[]
+  eventInquiries EventInquiry[]; webhookEvents WebhookEvent[]; orders Order[]; payments Payment[]; staffActions StaffAction[]
+  posConnection PosConnection?; inventorySyncs InventorySync[]; createdAt DateTime @default(now()); updatedAt DateTime @updatedAt
+}
+model MenuItem {
+  id String @id @default(cuid()); restaurantId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  name String; description String?; price Int; available Boolean @default(true); category String?; allergens String[]; dietaryTags String[]; modifiers Json?; sortOrder Int @default(0)
+  externalId String?; inventorySource InventorySource @default(MANUAL); stockQuantity Int?; lowStockThreshold Int?
+  createdAt DateTime @default(now()); updatedAt DateTime @updatedAt; orderItems OrderItem[]
+  @@unique([restaurantId,externalId])
+}
+model KnowledgeEntry {
+  id String @id @default(cuid()); restaurantId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  title String; content String; active Boolean @default(true); createdAt DateTime @default(now()); updatedAt DateTime @updatedAt
+}
+model Customer {
+  id String @id @default(cuid()); restaurantId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  whatsappNumber String; name String?; email String?; notes String?; conversations Conversation[]; reservations Reservation[]; orders Order[]
+  createdAt DateTime @default(now()); updatedAt DateTime @updatedAt; @@unique([restaurantId,whatsappNumber])
+}
+model Conversation {
+  id String @id @default(cuid()); restaurantId String; customerId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  customer Customer @relation(fields:[customerId],references:[id],onDelete:Cascade); status String @default("OPEN"); messages Message[]
+  createdAt DateTime @default(now()); updatedAt DateTime @updatedAt
+}
+model Message {
+  id String @id @default(cuid()); conversationId String; conversation Conversation @relation(fields:[conversationId],references:[id],onDelete:Cascade)
+  role MessageRole; content String; whatsappId String?; createdAt DateTime @default(now()); @@index([conversationId,createdAt])
+}
+model Reservation {
+  id String @id @default(cuid()); restaurantId String; customerId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  customer Customer @relation(fields:[customerId],references:[id],onDelete:Cascade); guestCount Int; dateTime DateTime
+  status ReservationStatus @default(PENDING); tableZone String?; occasion String?; notes String?; provider String?; providerReservationId String?; holdExpiresAt DateTime?
+  createdAt DateTime @default(now()); updatedAt DateTime @updatedAt; @@index([restaurantId,dateTime]); @@index([provider,providerReservationId])
+}
+model EventInquiry {
+  id String @id @default(cuid()); restaurantId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  name String?; whatsapp String?; eventType String?; eventDate DateTime?; guestCount Int?; budget Int?; notes String?; status EventStatus @default(NEW)
+  createdAt DateTime @default(now()); updatedAt DateTime @updatedAt
+}
+model WebhookEvent {
+  id String @id @default(cuid()); restaurantId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  provider String; externalId String; eventType String?; payload Json; processedAt DateTime?; createdAt DateTime @default(now())
+  @@unique([provider,externalId]); @@index([restaurantId,createdAt])
+}
+model Order {
+  id String @id @default(cuid()); restaurantId String; customerId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  customer Customer @relation(fields:[customerId],references:[id],onDelete:Cascade); status OrderStatus @default(DRAFT); fulfillmentType FulfillmentType
+  subtotal Int; deliveryFee Int @default(0); serviceFee Int @default(0); total Int; deliveryAddress String?; notes String?; externalOrderId String?
+  items OrderItem[]; payments Payment[]; staffActions StaffAction[]; acceptedAt DateTime?; rejectedAt DateTime?; rejectionReason String?
+  createdAt DateTime @default(now()); updatedAt DateTime @updatedAt; @@index([restaurantId,createdAt]); @@index([status,createdAt])
+}
+model OrderItem {
+  id String @id @default(cuid()); orderId String; menuItemId String; order Order @relation(fields:[orderId],references:[id],onDelete:Cascade)
+  menuItem MenuItem @relation(fields:[menuItemId],references:[id]); quantity Int; unitPrice Int; modifiers Json?; notes String?; lineTotal Int
+}
+model Payment {
+  id String @id @default(cuid()); restaurantId String; orderId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  order Order @relation(fields:[orderId],references:[id],onDelete:Cascade); provider String; reference String @unique; amount Int; currency String @default("NGN")
+  status PaymentStatus @default(PENDING); authorizationUrl String?; paidAt DateTime?; metadata Json?; createdAt DateTime @default(now()); updatedAt DateTime @updatedAt
+  @@index([orderId]); @@index([provider,reference])
+}
+model StaffAction {
+  id String @id @default(cuid()); restaurantId String; orderId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  order Order @relation(fields:[orderId],references:[id],onDelete:Cascade); action StaffActionType; staffName String?; details Json?
+  createdAt DateTime @default(now()); @@index([orderId,createdAt])
+}
+model PosConnection {
+  id String @id @default(cuid()); restaurantId String @unique; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  provider String; baseUrl String?; encryptedCredentials String?; active Boolean @default(false); lastSyncAt DateTime?; lastError String?; syncStatus SyncStatus @default(IDLE)
+  createdAt DateTime @default(now()); updatedAt DateTime @updatedAt
+}
+model InventorySync {
+  id String @id @default(cuid()); restaurantId String; restaurant Restaurant @relation(fields:[restaurantId],references:[id],onDelete:Cascade)
+  provider String; status SyncStatus; startedAt DateTime @default(now()); finishedAt DateTime?; recordsSeen Int @default(0); recordsUpdated Int @default(0); error String?
+  @@index([restaurantId,startedAt])
+}
